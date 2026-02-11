@@ -4,20 +4,24 @@ import json
 from dataclasses import dataclass
 from typing import Any, Optional, TypeVar, Union
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from nanobot import __version__
 from nanobot.config.schema import A2AConfig
 
 from .models import (
     A2AError,
     A2AErrorResponse,
     AgentCard,
+    AgentCardCapabilities,
+    AgentCardSecurityScheme,
+    AgentCardSkill,
     CancelTaskRequest,
     OperationResponse,
     SendTaskRequest,
 )
 
-T = TypeVar("T")
+T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass(slots=True)
@@ -35,10 +39,16 @@ class A2ARouter:
             return RouteResult(status_code=200, payload={"status": "ok"})
 
         if method == "GET" and path == "/.well-known/agent-card.json":
+            security_schemes: dict[str, AgentCardSecurityScheme] = {}
+            security: list[dict[str, list[str]]] = []
+            if self._config.auth_token:
+                security_schemes["bearerAuth"] = AgentCardSecurityScheme()
+                security.append({"bearerAuth": []})
+
             card = AgentCard(
                 name="nanobot",
-                description="nanobot A2A placeholder server",
-                version="0.1.0",
+                description="Ultra-lightweight personal AI assistant with A2A HTTP+JSON MVP support",
+                version=__version__,
                 protocol_version=self._config.protocol_version,
                 endpoints={
                     "send": "/a2a/tasks:send",
@@ -47,8 +57,21 @@ class A2ARouter:
                     "cancel": "/a2a/tasks/{task_id}:cancel",
                 },
                 methods=["send", "get", "list", "cancel"],
+                capabilities=AgentCardCapabilities(streaming=False, pushNotifications=False),
+                defaultInputModes=["text/plain"],
+                defaultOutputModes=["text/plain"],
+                skills=[
+                    AgentCardSkill(
+                        id="nanobot-text-assistant",
+                        name="nanobot",
+                        description="Text-only assistant for A2A MVP task handling",
+                        tags=["assistant", "text"],
+                    )
+                ],
+                securitySchemes=security_schemes,
+                security=security,
             )
-            return RouteResult(status_code=200, payload=card.model_dump(mode="json"))
+            return RouteResult(status_code=200, payload=card.model_dump(mode="json", by_alias=True))
 
         if path.startswith("/a2a/") and not self._is_authorized(headers):
             return self._error(
