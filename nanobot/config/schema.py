@@ -187,9 +187,9 @@ class A2AConfig(BaseModel):
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = 8080
-    auth_token: str = ""
-    max_request_size: int = 1048576
-    request_timeout: int = 30
+    auth_token: str = Field(default="", repr=False)
+    max_request_size: int = Field(default=1_048_576, ge=1)
+    request_timeout: int = Field(default=30, ge=1)
     protocol_version: str = "0.3"
 
 

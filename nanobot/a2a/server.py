@@ -14,7 +14,7 @@ from nanobot.config.schema import A2AConfig
 from .router import A2ARouter, RouteResult
 
 
-@dataclass(slots=True)
+@dataclass
 class HTTPRequest:
     method: str
     path: str
@@ -83,29 +83,23 @@ class A2AServer:
             )
             await self._write_json_response(writer, result)
         except HTTPParseError as exc:
-            payload = {"error": {"code": exc.code, "message": exc.message, "details": {}}}
             await self._write_json_response(
-                writer, RouteResult(status_code=exc.status_code, payload=payload)
+                writer,
+                self.router.error_response(
+                    code=exc.code,
+                    message=exc.message,
+                    status_code=exc.status_code,
+                ),
             )
         except asyncio.TimeoutError:
-            payload = {
-                "error": {
-                    "code": "request_timeout",
-                    "message": "Request processing timed out",
-                    "details": {},
-                }
-            }
-            await self._write_json_response(writer, RouteResult(status_code=408, payload=payload))
-        except Exception as exc:
-            logger.exception(f"Unhandled A2A server error: {exc}")
-            payload = {
-                "error": {
-                    "code": "internal_error",
-                    "message": "Internal server error",
-                    "details": {},
-                }
-            }
-            await self._write_json_response(writer, RouteResult(status_code=500, payload=payload))
+            await self._write_json_response(
+                writer, self.router.error_response(code="upstream_timeout")
+            )
+        except Exception:
+            logger.exception("Unhandled A2A server error")
+            await self._write_json_response(
+                writer, self.router.error_response(code="internal_error")
+            )
         finally:
             writer.close()
             await writer.wait_closed()
@@ -122,6 +116,9 @@ class A2AServer:
             raise HTTPParseError(
                 status_code=400, code="invalid_request", message="Malformed request line"
             ) from exc
+
+        method = method.upper()
+        path = urlsplit(raw_target).path or "/"
 
         headers: dict[str, str] = {}
         while True:
@@ -142,6 +139,16 @@ class A2AServer:
 
             key, value = header_line.split(":", 1)
             headers[key.strip().lower()] = value.strip()
+
+        if method == "POST" and path.startswith("/a2a/"):
+            content_type = headers.get("content-type", "")
+            media_type = content_type.split(";", 1)[0].strip().lower()
+            if media_type != "application/json":
+                raise HTTPParseError(
+                    status_code=415,
+                    code="unsupported_type",
+                    message="Content-Type must be application/json",
+                )
 
         content_length = 0
         if "content-length" in headers:
@@ -169,8 +176,14 @@ class A2AServer:
                 status_code=400, code="invalid_request", message="Incomplete request body"
             ) from exc
 
-        path = urlsplit(raw_target).path or "/"
-        return HTTPRequest(method=method.upper(), path=path, headers=headers, body=body)
+        if len(body) > self.config.max_request_size:
+            raise HTTPParseError(
+                status_code=413,
+                code="payload_too_large",
+                message="Request body exceeds limit",
+            )
+
+        return HTTPRequest(method=method, path=path, headers=headers, body=body)
 
     async def _write_json_response(self, writer: asyncio.StreamWriter, result: RouteResult) -> None:
         reason = HTTPStatus(result.status_code).phrase
