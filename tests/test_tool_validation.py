@@ -1,6 +1,10 @@
+import shutil
 from typing import Any
 
+import pytest
+
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.monty_code import MontyCodeTool
 from nanobot.agent.tools.registry import ToolRegistry
 
 
@@ -86,3 +90,48 @@ async def test_registry_returns_validation_error() -> None:
     reg.register(SampleTool())
     result = await reg.execute("sample", {"query": "hi"})
     assert "Invalid parameters" in result
+
+
+async def test_code_tool_rejects_unknown_mode() -> None:
+    tool = MontyCodeTool()
+    result = await tool.execute(code="1 + 1", mode="invalid")
+    assert result == "Error: mode must be one of auto, monty, uv"
+
+
+async def test_code_tool_rejects_invalid_dependencies() -> None:
+    tool = MontyCodeTool()
+    result = await tool.execute(code="1 + 1", dependencies=["ok", ""])
+    assert result == "Error: dependencies must be an array of non-empty strings"
+
+
+async def test_code_tool_e2e_monty_execution() -> None:
+    tool = MontyCodeTool()
+    result = await tool.execute(code="40 + 2", mode="monty")
+    assert result == "42"
+
+
+async def test_code_tool_e2e_uv_execution() -> None:
+    if shutil.which("uv") is None:
+        pytest.skip("uv is not installed")
+
+    tool = MontyCodeTool()
+    result = await tool.execute(code='print("uv-ok")', mode="uv")
+    assert "uv-ok" in result
+    assert "Error:" not in result
+
+
+async def test_code_tool_e2e_auto_uses_monty_without_deps() -> None:
+    tool = MontyCodeTool()
+    result = await tool.execute(code="100 + 23", mode="auto")
+    assert result == "123"
+
+
+async def test_code_tool_e2e_auto_uses_uv_with_deps() -> None:
+    if shutil.which("uv") is None:
+        pytest.skip("uv is not installed")
+
+    tool = MontyCodeTool()
+    code = 'import httpx; print("httpx-auto-ok")'
+    result = await tool.execute(code=code, mode="auto", dependencies=["httpx"])
+    assert "httpx-auto-ok" in result
+    assert "Error:" not in result
