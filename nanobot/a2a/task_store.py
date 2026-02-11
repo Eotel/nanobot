@@ -9,7 +9,6 @@ from typing import Any, Protocol
 
 from nanobot.a2a.models import TaskState
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -52,13 +51,17 @@ class TaskStore:
     async def create_task(self, input_data: dict[str, Any]) -> str:
         task_id = str(uuid.uuid4())[:8]
         now = _now_iso()
+        metadata = input_data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
         task_record = {
             "task": {
                 "id": task_id,
                 "state": "submitted",
                 "created_at": now,
                 "updated_at": now,
-                "metadata": {},
+                "metadata": deepcopy(metadata),
             },
             "input": deepcopy(input_data),
             "output": None,
@@ -247,15 +250,28 @@ class TaskStore:
         task["task"]["updated_at"] = _now_iso()
 
     def _extract_content(self, input_data: dict[str, Any]) -> str:
-        messages = input_data.get("messages") if isinstance(input_data, dict) else None
+        messages = input_data.get("messages")
+        if messages is None:
+            nested_input = input_data.get("input")
+            if isinstance(nested_input, dict):
+                messages = nested_input.get("messages")
+
         if not isinstance(messages, list):
             raise ValueError("Task input must contain a messages list")
 
         for msg in reversed(messages):
-            if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            if (
+                isinstance(msg, dict)
+                and msg.get("role") == "user"
+                and isinstance(msg.get("content"), str)
+            ):
                 return msg["content"]
 
-        if messages and isinstance(messages[0].get("content"), str):
+        if (
+            messages
+            and isinstance(messages[0], dict)
+            and isinstance(messages[0].get("content"), str)
+        ):
             return messages[0]["content"]
 
         raise ValueError("Task input does not include text content")

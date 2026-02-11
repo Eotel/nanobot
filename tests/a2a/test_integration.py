@@ -2,6 +2,7 @@
 
 # pyright: reportMissingImports=false
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,6 +13,7 @@ from nanobot.a2a.models import (
     SendTaskRequest,
 )
 from nanobot.a2a.router import A2ARouter
+from nanobot.a2a.server import A2AServer
 from nanobot.a2a.task_store import TaskStore
 from nanobot.config.schema import A2AConfig
 
@@ -161,3 +163,15 @@ class TestErrorScenarios:
             result = await router.handle("GET", f"/a2a/tasks/{task_id}", {}, b"")
             # Should return 404 for invalid IDs
             assert result.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a2a_server_receives_agent_loop():
+    """Regression test: AgentLoop must be wired to A2AServer."""
+    config = A2AConfig(enabled=True, host="127.0.0.1", port=9999)
+    mock_agent = MagicMock()
+
+    server = A2AServer(config, agent_loop=mock_agent)
+
+    # Verify agent_loop reached TaskStore
+    assert server.task_store._agent_loop is mock_agent
