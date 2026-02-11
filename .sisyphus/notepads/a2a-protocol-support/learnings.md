@@ -1,0 +1,13 @@
+- 2026-02-11: Added `A2AConfig` to root config with disabled-by-default behavior and safe localhost bind defaults.
+- 2026-02-11: Gateway lifecycle can include optional long-running services without changing existing channel manager startup flow by creating independent asyncio tasks.
+- 2026-02-11: A minimal placeholder A2A surface is sufficient for Task 2 when protocol routes return structured not-implemented responses.
+- 2026-02-11: Agent Card discovery should stay unauthenticated while still advertising bearer auth via `securitySchemes` and `security` when `a2a.auth_token` is configured.
+- 2026-02-11: Centralizing A2A error metadata in a single `ERROR_MAP` keeps HTTP status, JSON-RPC compatibility code, and stable error code synchronized across router and server parse paths.
+- 2026-02-11: `Authorization` handling should split `auth_required` (missing header) from `auth_invalid` (malformed/wrong bearer token) while discovery remains unauthenticated.
+- 2026-02-11: Validation error details should be sanitized before returning payloads to avoid leaking request inputs or sensitive fields in API error bodies.
+- 2026-02-11: Enforcing `Content-Type: application/json` at the raw HTTP parsing layer provides consistent 415 responses before route-level business validation.
+- 2026-02-11: A2A task lifecycle works reliably with an explicit transition table (`submitted -> working -> completed|failed|canceled`) and a dedicated transition error when invalid moves are attempted.
+- 2026-02-11: In-memory task stores need `asyncio.Lock` around both state updates and cancellation paths to keep `cancel` vs `complete` races deterministic.
+- 2026-02-11: Delegating A2A execution to `AgentLoop.process_direct` through per-task asyncio background jobs preserves existing agent behavior while adding task-level state tracking.
+- 2026-02-11: Implementing A2A core methods is simplest when the router awaits `TaskStore` directly (`send/get/list/cancel`) and receives parsed query params from server request parsing, keeping contract responses consistent (`200` for completed wait, `202` for async/timeout).
+- 2026-02-11: When updating A2ARouter to require `task_store` parameter and make `handle()` async, all tests need systematic updates: import TaskStore, create instance, pass to constructor, add `@pytest.mark.asyncio`, and await `router.handle()` calls. Test payloads may change (e.g., `protocol_version` vs `protocolVersion`) and some tests may need conditional logic for successful vs error responses.

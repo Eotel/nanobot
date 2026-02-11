@@ -1,0 +1,2 @@
+- 2026-02-11: LSP diagnostics are not clean in this environment because basedpyright resolves against a Python 3.9 runtime while the repository targets Python >=3.11.
+- 2026-02-11: `python -m pytest` is unavailable on system Python; verification required creating a uv-managed environment and running tests through `uv run`.

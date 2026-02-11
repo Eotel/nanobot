@@ -1,0 +1,3 @@
+- 2026-02-11: Implemented A2A runtime with a lightweight asyncio TCP HTTP server to avoid introducing new project dependencies in Task 2.
+- 2026-02-11: Added placeholder routes in `nanobot/a2a/router.py` for send/get/list/cancel and discovery, deferring task lifecycle logic to later tasks.
+- 2026-02-11: Wired SIGINT and SIGTERM in gateway command to ensure A2A server shutdown participates in graceful service teardown.
