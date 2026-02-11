@@ -24,3 +24,6 @@ botpy.log
 .devenv/
 .devenv.flake.nix
 devenv.lock
+
+.claude/settings.local.json
+CLAUDE.local.md

@@ -100,9 +100,47 @@ exclude = [".venv/", "dist/", "build/"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = [
+    "--cov=nanobot",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml",
+    "-n=auto",
+    "--dist=loadgroup",
+]
+
+[tool.coverage.run]
+source = ["nanobot"]
+branch = true
+parallel = true
+concurrency = ["thread", "multiprocessing"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "nanobot/cli/*",
+    "nanobot/channels/whatsapp/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+fail_under = 80
+precision = 2
+show_missing = true
+skip_covered = false
 
 [dependency-groups]
 dev = [
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.15.0",
     "ty>=0.0.16",
 ]
