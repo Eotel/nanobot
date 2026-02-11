@@ -36,8 +36,7 @@ async def test_full_task_lifecycle() -> None:
     config = A2AConfig(enabled=True)
     agent_loop = EchoAgentLoop()
     task_store = TaskStore(agent_loop)
-    router = A2ARouter(config)
-    router._task_store = task_store  # Wire task store
+    router = A2ARouter(config, task_store)
 
     # Send task
     body = (
@@ -46,24 +45,26 @@ async def test_full_task_lifecycle() -> None:
         .encode()
     )
 
-    result = router.handle("POST", "/a2a/tasks:send", {"content-type": "application/json"}, body)
+    result = await router.handle(
+        "POST", "/a2a/tasks:send", {"content-type": "application/json"}, body
+    )
 
     assert result.status_code == 202
     task_id = result.payload["task"]["id"]
 
     # Get task
-    result = router.handle("GET", f"/a2a/tasks/{task_id}", {}, b"")
+    result = await router.handle("GET", f"/a2a/tasks/{task_id}", {}, b"")
     assert result.status_code == 200
     assert result.payload["task"]["id"] == task_id
 
     # List tasks
-    result = router.handle("GET", "/a2a/tasks", {}, b"")
+    result = await router.handle("GET", "/a2a/tasks", {}, b"")
     assert result.status_code == 200
     assert len(result.payload["tasks"]) >= 1
 
     # Cancel task
     cancel_body = CancelTaskRequest(method="cancel").model_dump_json().encode()
-    result = router.handle(
+    result = await router.handle(
         "POST", f"/a2a/tasks/{task_id}:cancel", {"content-type": "application/json"}, cancel_body
     )
 
@@ -77,8 +78,7 @@ async def test_concurrent_tasks() -> None:
     config = A2AConfig(enabled=True)
     agent_loop = EchoAgentLoop()
     task_store = TaskStore(agent_loop)
-    router = A2ARouter(config)
-    router._task_store = task_store
+    router = A2ARouter(config, task_store)
 
     # Create multiple tasks
     task_ids = []
@@ -89,7 +89,7 @@ async def test_concurrent_tasks() -> None:
             .encode()
         )
 
-        result = router.handle(
+        result = await router.handle(
             "POST", "/a2a/tasks:send", {"content-type": "application/json"}, body
         )
 
@@ -100,7 +100,7 @@ async def test_concurrent_tasks() -> None:
     assert len(task_ids) > 0
 
     # List should return all tasks
-    result = router.handle("GET", "/a2a/tasks", {}, b"")
+    result = await router.handle("GET", "/a2a/tasks", {}, b"")
     assert result.status_code == 200
     returned_ids = {t["id"] for t in result.payload["tasks"]}
 
@@ -111,45 +111,53 @@ async def test_concurrent_tasks() -> None:
 class TestErrorScenarios:
     """Test various error scenarios."""
 
-    def test_invalid_json_payload(self) -> None:
+    @pytest.mark.asyncio
+    async def test_invalid_json_payload(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle(
+        result = await router.handle(
             "POST", "/a2a/tasks:send", {"content-type": "application/json"}, b"not json"
         )
 
         assert result.status_code == 400
         assert result.payload["error"]["code"] == "parse_error"
 
-    def test_missing_required_fields(self) -> None:
+    @pytest.mark.asyncio
+    async def test_missing_required_fields(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle(
+        result = await router.handle(
             "POST", "/a2a/tasks:send", {"content-type": "application/json"}, b'{"method":"send"}'
         )
 
         assert result.status_code == 400
         assert result.payload["error"]["code"] == "invalid_params"
 
-    def test_unknown_endpoint(self) -> None:
+    @pytest.mark.asyncio
+    async def test_unknown_endpoint(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/a2a/unknown", {}, b"")
+        result = await router.handle("GET", "/a2a/unknown", {}, b"")
 
         assert result.status_code == 404
         assert result.payload["error"]["code"] == "method_not_found"
 
-    def test_invalid_task_id_format(self) -> None:
+    @pytest.mark.asyncio
+    async def test_invalid_task_id_format(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
         # Various invalid task ID formats
         invalid_ids = ["", "   ", "/../etc/passwd", "task with spaces"]
 
         for task_id in invalid_ids:
-            result = router.handle("GET", f"/a2a/tasks/{task_id}", {}, b"")
+            result = await router.handle("GET", f"/a2a/tasks/{task_id}", {}, b"")
             # Should return 404 for invalid IDs
             assert result.status_code == 404

@@ -2,6 +2,8 @@
 
 # pyright: reportMissingImports=false
 
+import pytest
+
 from nanobot.a2a.models import (
     CancelTaskRequest,
     SendTaskInput,
@@ -9,22 +11,25 @@ from nanobot.a2a.models import (
     SendTaskRequest,
 )
 from nanobot.a2a.router import A2ARouter
+from nanobot.a2a.task_store import TaskStore
 from nanobot.config.schema import A2AConfig
 
 
 class TestDiscovery:
     """Tests for /.well-known/agent-card.json endpoint."""
 
-    def test_discovery_returns_valid_agent_card(self) -> None:
+    @pytest.mark.asyncio
+    async def test_discovery_returns_valid_agent_card(self) -> None:
         config = A2AConfig(enabled=True, protocol_version="0.3")
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/.well-known/agent-card.json", {}, b"")
+        result = await router.handle("GET", "/.well-known/agent-card.json", {}, b"")
 
         assert result.status_code == 200
         payload = result.payload
         assert payload["name"] == "nanobot"
-        assert payload["protocolVersion"] == "0.3"
+        assert payload["protocol_version"] == "0.3"
         assert "endpoints" in payload
         assert "methods" in payload
         assert "capabilities" in payload
@@ -33,11 +38,13 @@ class TestDiscovery:
         assert "skills" in payload
         assert len(payload["skills"]) >= 1
 
-    def test_discovery_includes_auth_when_configured(self) -> None:
+    @pytest.mark.asyncio
+    async def test_discovery_includes_auth_when_configured(self) -> None:
         config = A2AConfig(enabled=True, auth_token="secret-token")
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/.well-known/agent-card.json", {}, b"")
+        result = await router.handle("GET", "/.well-known/agent-card.json", {}, b"")
 
         assert result.status_code == 200
         payload = result.payload
@@ -45,11 +52,13 @@ class TestDiscovery:
         assert "bearerAuth" in payload["securitySchemes"]
         assert len(payload["security"]) > 0
 
-    def test_discovery_does_not_expose_token(self) -> None:
+    @pytest.mark.asyncio
+    async def test_discovery_does_not_expose_token(self) -> None:
         config = A2AConfig(enabled=True, auth_token="secret-token")
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/.well-known/agent-card.json", {}, b"")
+        result = await router.handle("GET", "/.well-known/agent-card.json", {}, b"")
 
         payload_str = str(result.payload)
         assert "secret-token" not in payload_str
@@ -58,36 +67,44 @@ class TestDiscovery:
 class TestSend:
     """Tests for POST /a2a/tasks:send endpoint."""
 
-    def test_send_creates_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_send_creates_task(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
         body = (
             SendTaskRequest(input=SendTaskInput(messages=[SendTaskMessage(content="test message")]))
             .model_dump_json()
             .encode()
         )
 
-        result = router.handle(
+        result = await router.handle(
             "POST", "/a2a/tasks:send", {"content-type": "application/json"}, body
         )
 
         # Returns 202 Accepted (async) or 200 OK (sync with wait=true)
         assert result.status_code in (200, 202, 501)  # 501 if not fully implemented
 
-    def test_send_requires_content_type_json(self) -> None:
+    @pytest.mark.asyncio
+    async def test_send_requires_content_type_json(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("POST", "/a2a/tasks:send", {"content-type": "text/plain"}, b"{}")
+        result = await router.handle(
+            "POST", "/a2a/tasks:send", {"content-type": "text/plain"}, b"{}"
+        )
 
         assert result.status_code == 415
         assert result.payload["error"]["code"] == "unsupported_type"
 
-    def test_send_validates_payload(self) -> None:
+    @pytest.mark.asyncio
+    async def test_send_validates_payload(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle(
+        result = await router.handle(
             "POST", "/a2a/tasks:send", {"content-type": "application/json"}, b"invalid json"
         )
 
@@ -98,11 +115,13 @@ class TestSend:
 class TestGet:
     """Tests for GET /a2a/tasks/{task_id} endpoint."""
 
-    def test_get_returns_task_not_found_for_invalid_id(self) -> None:
+    @pytest.mark.asyncio
+    async def test_get_returns_task_not_found_for_invalid_id(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/a2a/tasks/invalid-id", {}, b"")
+        result = await router.handle("GET", "/a2a/tasks/invalid-id", {}, b"")
 
         assert result.status_code == 404
         assert result.payload["error"]["code"] == "task_not_found"
@@ -111,11 +130,13 @@ class TestGet:
 class TestList:
     """Tests for GET /a2a/tasks endpoint."""
 
-    def test_list_returns_task_list(self) -> None:
+    @pytest.mark.asyncio
+    async def test_list_returns_task_list(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/a2a/tasks", {}, b"")
+        result = await router.handle("GET", "/a2a/tasks", {}, b"")
 
         # Should return list (may be empty)
         assert result.status_code in (200, 501)
@@ -124,12 +145,14 @@ class TestList:
 class TestCancel:
     """Tests for POST /a2a/tasks/{task_id}:cancel endpoint."""
 
-    def test_cancel_validates_method(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cancel_validates_method(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
         body = CancelTaskRequest(method="invalid").model_dump_json().encode()
 
-        result = router.handle(
+        result = await router.handle(
             "POST", "/a2a/tasks/task-123:cancel", {"content-type": "application/json"}, body
         )
 
@@ -140,11 +163,13 @@ class TestCancel:
 class TestErrorFormat:
     """Tests that all errors follow A2A contract format."""
 
-    def test_error_includes_required_fields(self) -> None:
+    @pytest.mark.asyncio
+    async def test_error_includes_required_fields(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
-        result = router.handle("GET", "/a2a/unknown-endpoint", {}, b"")
+        result = await router.handle("GET", "/a2a/unknown-endpoint", {}, b"")
 
         assert result.status_code == 404
         error = result.payload["error"]
@@ -156,7 +181,8 @@ class TestErrorFormat:
 
     def test_error_jsonrpc_codes_match_contract(self) -> None:
         config = A2AConfig(enabled=True)
-        router = A2ARouter(config)
+        task_store = TaskStore()
+        router = A2ARouter(config, task_store)
 
         # Test various error scenarios
         test_cases = [
