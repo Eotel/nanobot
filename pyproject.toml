@@ -34,6 +34,7 @@ dependencies = [
     "socksio>=1.0.0",
     "slack-sdk>=3.26.0",
     "qq-botpy>=1.0.0",
+    "pydantic-monty>=0.0.4",
 ]
 
 [project.optional-dependencies]
@@ -87,7 +88,12 @@ ignore = ["E501"]
 quote-style = "double"
 
 [tool.ty]
+
+[tool.ty.environment]
 python-version = "3.11"
+
+[tool.ty.src]
+exclude = [".venv/", "dist/", "build/"]
 
 [tool.ty.rules]
 

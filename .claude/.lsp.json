@@ -1,0 +1,6 @@
+{
+  "ty": {
+    "command": "ty",
+    "args": ["server"]
+  }
+}

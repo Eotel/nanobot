@@ -1,0 +1,17 @@
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+  nixpkgs-python:
+    url: github:cachix/nixpkgs-python
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+  pre-commit-hooks:
+    url: github:cachix/pre-commit-hooks.nix
+
+cachix:
+  enable: true
+  caches:
+    - nixpkgs-python
+    - devenv
+    - nix-community

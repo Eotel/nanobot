@@ -1,0 +1,11 @@
+[global]
+excludes = [".venv/", "dist/", "build/", "*.egg-info/"]
+
+[formatter.python]
+command = "ruff"
+options = ["format"]
+includes = ["*.py"]
+
+[formatter.nix]
+command = "nixfmt"
+includes = ["*.nix"]
