@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, Optional, Protocol, TypeVar, Union
 
 from pydantic import BaseModel, ValidationError
 
@@ -17,11 +18,36 @@ from .models import (
     AgentCardSecurityScheme,
     AgentCardSkill,
     CancelTaskRequest,
-    OperationResponse,
     SendTaskRequest,
+    TaskState,
 )
 
 T = TypeVar("T", bound=BaseModel)
+
+TERMINAL_STATES: set[TaskState] = {"completed", "failed", "canceled"}
+VALID_TASK_STATES: set[TaskState] = {
+    "submitted",
+    "working",
+    "completed",
+    "failed",
+    "canceled",
+}
+
+
+class TaskStoreLike(Protocol):
+    async def create_task(self, input_data: dict[str, Any]) -> str: ...
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None: ...
+
+    async def list_tasks(
+        self,
+        state: TaskState | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]: ...
+
+    async def cancel_task(self, task_id: str, reason: str) -> bool: ...
+
 
 ERROR_MAP: dict[str, tuple[int, int, str]] = {
     "parse_error": (400, -32700, "Invalid JSON payload"),
@@ -57,10 +83,18 @@ class RouteResult:
 
 
 class A2ARouter:
-    def __init__(self, config: A2AConfig):
+    def __init__(self, config: A2AConfig, task_store: TaskStoreLike):
         self._config = config
+        self._task_store = task_store
 
-    def handle(self, method: str, path: str, headers: dict[str, str], body: bytes) -> RouteResult:
+    async def handle(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: bytes,
+        query_params: Optional[dict[str, list[str]]] = None,
+    ) -> RouteResult:
         if method == "GET" and path == "/a2a/health":
             return RouteResult(status_code=200, payload={"status": "ok"})
 
@@ -122,16 +156,16 @@ class A2ARouter:
             content_type_error = self._validate_send_content_types(parsed)
             if content_type_error is not None:
                 return content_type_error
-            return self._placeholder("send")
+            return await self._handle_send(parsed)
 
         if method == "GET" and path == "/a2a/tasks":
-            return self._placeholder("list")
+            return await self._handle_list(query_params or {})
 
         if method == "GET" and path.startswith("/a2a/tasks/") and not path.endswith(":cancel"):
-            task_id = path.removeprefix("/a2a/tasks/")
+            task_id = self._extract_task_id(path)
             if not task_id:
                 return self._error(code="task_not_found")
-            return self._placeholder("get")
+            return await self._handle_get(task_id)
 
         if method == "POST" and path.startswith("/a2a/tasks/") and path.endswith(":cancel"):
             parsed = self._parse_json(body, CancelTaskRequest)
@@ -139,7 +173,10 @@ class A2ARouter:
                 return parsed
             if parsed.method != "cancel":
                 return self._error(code="invalid_request", message="Method must be 'cancel'")
-            return self._placeholder("cancel")
+            task_id = self._extract_task_id(path, suffix=":cancel")
+            if not task_id:
+                return self._error(code="task_not_found")
+            return await self._handle_cancel(task_id=task_id, request=parsed)
 
         return self._error(code="method_not_found")
 
@@ -245,9 +282,162 @@ class A2ARouter:
             sanitized.append(item)
         return sanitized
 
-    def _placeholder(self, method_name: str) -> RouteResult:
-        response = OperationResponse(message=f"{method_name} route is not implemented yet")
-        return RouteResult(status_code=501, payload=response.model_dump(mode="json"))
+    async def _handle_send(self, request: SendTaskRequest) -> RouteResult:
+        task_payload = request.model_dump(mode="json")
+
+        try:
+            task_id = await self._task_store.create_task(task_payload)
+            task_record = await self._task_store.get_task(task_id)
+        except Exception:
+            return self._error(code="internal_error")
+
+        if task_record is None:
+            return self._error(code="internal_error")
+
+        if request.options.wait:
+            timeout_ms = request.options.timeout_ms or 30000
+            completed_task = await self._wait_for_terminal_state(
+                task_id=task_id, timeout_ms=timeout_ms
+            )
+            if completed_task is not None:
+                return RouteResult(
+                    status_code=200,
+                    payload=self._build_send_response(completed_task),
+                )
+
+            latest_task = await self._task_store.get_task(task_id)
+            if latest_task is not None:
+                return RouteResult(
+                    status_code=202,
+                    payload=self._build_send_response(latest_task),
+                )
+
+        return RouteResult(status_code=202, payload=self._build_send_response(task_record))
+
+    async def _handle_get(self, task_id: str) -> RouteResult:
+        try:
+            task_record = await self._task_store.get_task(task_id)
+        except Exception:
+            return self._error(code="internal_error")
+
+        if task_record is None:
+            return self._error(code="task_not_found")
+
+        return RouteResult(status_code=200, payload=self._build_get_response(task_record))
+
+    async def _handle_list(self, query_params: dict[str, list[str]]) -> RouteResult:
+        state_raw = self._query_param_value(query_params, "state")
+        limit_raw = self._query_param_value(query_params, "limit")
+        cursor = self._query_param_value(query_params, "cursor")
+
+        state: TaskState | None = None
+        if state_raw:
+            if state_raw not in VALID_TASK_STATES:
+                return self._error(
+                    code="invalid_params",
+                    details={"state": state_raw, "allowed": sorted(VALID_TASK_STATES)},
+                )
+            state = state_raw
+
+        limit = 20
+        if limit_raw:
+            try:
+                limit = int(limit_raw)
+            except ValueError:
+                return self._error(code="invalid_params", details={"limit": limit_raw})
+            if limit <= 0:
+                return self._error(code="invalid_params", details={"limit": limit_raw})
+
+        try:
+            tasks, next_cursor = await self._task_store.list_tasks(
+                state=state,
+                limit=limit,
+                cursor=cursor,
+            )
+        except Exception:
+            return self._error(code="internal_error")
+
+        return RouteResult(
+            status_code=200,
+            payload={
+                "tasks": tasks,
+                "next_cursor": next_cursor,
+            },
+        )
+
+    async def _handle_cancel(self, task_id: str, request: CancelTaskRequest) -> RouteResult:
+        try:
+            task_record = await self._task_store.get_task(task_id)
+            if task_record is None:
+                return self._error(code="task_not_found")
+
+            await self._task_store.cancel_task(task_id, request.reason)
+            updated_task = await self._task_store.get_task(task_id)
+        except Exception:
+            return self._error(code="internal_error")
+
+        if updated_task is None:
+            return self._error(code="task_not_found")
+
+        return RouteResult(status_code=200, payload={"task": updated_task["task"]})
+
+    async def _wait_for_terminal_state(
+        self,
+        task_id: str,
+        timeout_ms: int,
+    ) -> dict[str, Any] | None:
+        if timeout_ms <= 0:
+            return await self._task_store.get_task(task_id)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (timeout_ms / 1000)
+
+        while True:
+            task_record = await self._task_store.get_task(task_id)
+            if task_record is None:
+                return None
+
+            state = task_record.get("task", {}).get("state")
+            if state in TERMINAL_STATES:
+                return task_record
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+
+            await asyncio.sleep(min(0.05, remaining))
+
+    def _extract_task_id(self, path: str, suffix: str = "") -> str:
+        prefix = "/a2a/tasks/"
+        if not path.startswith(prefix):
+            return ""
+
+        task_id = path[len(prefix) :]
+        if suffix:
+            if not task_id.endswith(suffix):
+                return ""
+            task_id = task_id[: -len(suffix)]
+        return task_id.strip()
+
+    def _query_param_value(self, query_params: dict[str, list[str]], name: str) -> Optional[str]:
+        values = query_params.get(name)
+        if not values:
+            return None
+        value = values[-1].strip()
+        return value or None
+
+    def _build_send_response(self, task_record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "task": task_record["task"],
+            "output": task_record.get("output"),
+        }
+
+    def _build_get_response(self, task_record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "task": task_record["task"],
+            "output": task_record.get("output"),
+            "failure": task_record.get("failure"),
+        }
 
     def _error(
         self,

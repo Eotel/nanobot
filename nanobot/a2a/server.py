@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Optional
-from urllib.parse import urlsplit
+from typing import Any, Optional
+from urllib.parse import parse_qs, urlsplit
 
 from loguru import logger
 
@@ -18,6 +19,7 @@ from .router import A2ARouter, RouteResult
 class HTTPRequest:
     method: str
     path: str
+    query_params: dict[str, list[str]]
     headers: dict[str, str]
     body: bytes
 
@@ -31,9 +33,11 @@ class HTTPParseError(Exception):
 
 
 class A2AServer:
-    def __init__(self, config: A2AConfig):
+    def __init__(self, config: A2AConfig, agent_loop: Any = None):
         self.config = config
-        self.router = A2ARouter(config)
+        task_store_module = importlib.import_module("nanobot.a2a.task_store")
+        self.task_store = task_store_module.TaskStore(agent_loop=agent_loop)
+        self.router = A2ARouter(config, task_store=self.task_store)
         self._server: Optional[asyncio.Server] = None
         self._shutdown = asyncio.Event()
 
@@ -75,11 +79,12 @@ class A2AServer:
             request = await asyncio.wait_for(
                 self._read_request(reader), timeout=self.config.request_timeout
             )
-            result = self.router.handle(
+            result = await self.router.handle(
                 method=request.method,
                 path=request.path,
                 headers=request.headers,
                 body=request.body,
+                query_params=request.query_params,
             )
             await self._write_json_response(writer, result)
         except HTTPParseError as exc:
@@ -118,7 +123,9 @@ class A2AServer:
             ) from exc
 
         method = method.upper()
-        path = urlsplit(raw_target).path or "/"
+        split_target = urlsplit(raw_target)
+        path = split_target.path or "/"
+        query_params = parse_qs(split_target.query, keep_blank_values=True)
 
         headers: dict[str, str] = {}
         while True:
@@ -183,7 +190,13 @@ class A2AServer:
                 message="Request body exceeds limit",
             )
 
-        return HTTPRequest(method=method, path=path, headers=headers, body=body)
+        return HTTPRequest(
+            method=method,
+            path=path,
+            query_params=query_params,
+            headers=headers,
+            body=body,
+        )
 
     async def _write_json_response(self, writer: asyncio.StreamWriter, result: RouteResult) -> None:
         reason = HTTPStatus(result.status_code).phrase
