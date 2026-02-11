@@ -42,6 +42,19 @@ exec(command: str, working_dir: str = None) -> str
 - Output is truncated at 10,000 characters
 - Optional `restrictToWorkspace` config to limit paths
 
+### code
+Execute Python code using Monty or an isolated uv environment.
+```
+code(code: str, timeout: int = 10, mode: "auto"|"monty"|"uv" = "auto", dependencies: str[] = []) -> str
+```
+
+**Notes:**
+- `mode="auto"` uses Monty unless dependencies are provided
+- `mode="monty"` forces pydantic-monty sandbox execution
+- `mode="uv"` runs via `uv run --no-project --isolated --no-cache` in `~/.nanobot/code-runs`
+- Use `dependencies` with uv mode to install ad-hoc packages via `--with`
+- Output is truncated at 10,000 characters
+
 ## Web Access
 
 ### web_search
