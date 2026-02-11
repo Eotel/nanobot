@@ -83,6 +83,20 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ty]
+python-version = "3.11"
+
+[tool.ty.rules]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+    "ty>=0.0.16",
+]

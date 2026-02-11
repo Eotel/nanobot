@@ -19,3 +19,8 @@ poetry.lock
 .pytest_cache/
 tests/
 botpy.log
+
+# devenv
+.devenv/
+.devenv.flake.nix
+devenv.lock
