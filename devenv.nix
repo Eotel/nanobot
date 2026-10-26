@@ -3,7 +3,8 @@
 {
   languages.python = {
     enable = true;
-    version = "3.12";
+    package = pkgs.python312;
+    venv.enable = true;
     uv = {
       enable = true;
       sync.enable = true;
